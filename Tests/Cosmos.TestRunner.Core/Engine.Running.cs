@@ -1,7 +1,8 @@
 ﻿using System;
 using System.Threading;
-using Cosmos.Debug.Common;
-using Cosmos.Debug.VSDebugEngine.Host;
+
+using Cosmos.Debug.DebugConnectors;
+using Cosmos.Debug.Hosts;
 
 namespace Cosmos.TestRunner.Core
 {
@@ -17,6 +18,10 @@ namespace Cosmos.TestRunner.Core
                 throw new ArgumentNullException("debugConnector");
             }
             debugConnector.OnDebugMsg = s => OutputHandler.LogDebugMessage(s);
+            debugConnector.ConnectionLost = ex =>
+            {
+                OutputHandler.LogError($"DC: Connection lost. {ex.Message}");
+            };
             debugConnector.CmdChannel = ChannelPacketReceived;
             debugConnector.CmdStarted = () =>
                 {
@@ -32,9 +37,15 @@ namespace Cosmos.TestRunner.Core
                 };
             debugConnector.CmdText += s => OutputHandler.LogMessage("Text from kernel: " + s);
             debugConnector.CmdSimpleNumber += n => OutputHandler.LogMessage("Number from kernel: 0x" + n.ToString("X8").ToUpper());
-            debugConnector.CmdComplexSingleNumber += f => OutputHandler.LogMessage("Number from kernel: " + f);
-            debugConnector.CmdComplexDoubleNumber += d => OutputHandler.LogMessage("Number from kernel: " + d);
+            debugConnector.CmdSimpleLongNumber += n => OutputHandler.LogMessage("Number from kernel: 0x" + n.ToString("X16").ToUpper());
+            debugConnector.CmdComplexNumber += f => OutputHandler.LogMessage("Number from kernel: 0x" + f.ToString("X8").ToUpper());
+            debugConnector.CmdComplexLongNumber += d => OutputHandler.LogMessage("Number from kernel: 0x" + d.ToString("X16").ToUpper());
             debugConnector.CmdMessageBox = s => OutputHandler.LogMessage("MessageBox from kernel: " + s);
+            debugConnector.CmdKernelPanic = n =>
+                                            {
+                                                OutputHandler.LogMessage("Kernel panic! Number = " + n);
+                                                // todo: add core dump here, call stack.
+                                            };
             debugConnector.CmdTrace = t => { };
             debugConnector.CmdBreak = t => { };
             debugConnector.CmdStackCorruptionOccurred = a =>
@@ -44,18 +55,97 @@ namespace Cosmos.TestRunner.Core
                     mKernelResultSet = true;
                     mKernelRunning = false;
                 };
+            debugConnector.CmdStackOverflowOccurred = a =>
+                                                      {
+                                                          OutputHandler.LogMessage("Stack overflow occurred at: 0x" + a.ToString("X8"));
+                                                          OutputHandler.SetKernelTestResult(false, "Stack overflow occurred at: 0x" + a.ToString("X8"));
+                                                          mKernelResultSet = true;
+                                                          mKernelRunning = false;
+                                                      };
             debugConnector.CmdNullReferenceOccurred = a =>
                 {
                     OutputHandler.LogMessage("Null Reference Exception occurred at: 0x" + a.ToString("X8"));
-                    OutputHandler.SetKernelTestResult(
-                        false,
-                        "Null Reference Exception occurred at: 0x" + a.ToString("X8"));
+                    OutputHandler.SetKernelTestResult(false, "Null Reference Exception occurred at: 0x" + a.ToString("X8"));
                     mKernelResultSet = true;
                     mKernelRunning = false;
                 };
+            debugConnector.CmdCoreDump = b =>
+            {
+                string xCallStack = "";
+                int i = 0;
+
+                OutputHandler.LogMessage("Core dump:");
+                string eax = "EAX = 0x" +
+                             b[i + 3].ToString("X2") + b[i + 2].ToString("X2") +
+                             b[i + 0].ToString("X2") + b[i + 1].ToString("X2");
+                i += 4;
+                string ebx = "EBX = 0x" +
+                             b[i + 3].ToString("X2") + b[i + 2].ToString("X2") +
+                             b[i + 0].ToString("X2") + b[i + 1].ToString("X2");
+                i += 4;
+                string ecx = "ECX = 0x" +
+                             b[i + 3].ToString("X2") + b[i + 2].ToString("X2") +
+                             b[i + 0].ToString("X2") + b[i + 1].ToString("X2");
+                i += 4;
+                string edx = "EDX = 0x" +
+                             b[i + 3].ToString("X2") + b[i + 2].ToString("X2") +
+                             b[i + 0].ToString("X2") + b[i + 1].ToString("X2");
+                i += 4;
+                string edi = "EDI = 0x" +
+                             b[i + 3].ToString("X2") + b[i + 2].ToString("X2") +
+                             b[i + 0].ToString("X2") + b[i + 1].ToString("X2");
+                i += 4;
+                string esi = "ESI = 0x" +
+                             b[i + 3].ToString("X2") + b[i + 2].ToString("X2") +
+                             b[i + 0].ToString("X2") + b[i + 1].ToString("X2");
+                i += 4;
+                string ebp = "EBP = 0x" +
+                             b[i + 3].ToString("X2") + b[i + 2].ToString("X2") +
+                             b[i + 0].ToString("X2") + b[i + 1].ToString("X2");
+                i += 4;
+                string eip = "EIP = 0x" +
+                             b[i + 3].ToString("X2") + b[i + 2].ToString("X2") +
+                             b[i + 0].ToString("X2") + b[i + 1].ToString("X2");
+                i += 4;
+                string esp = "ESP = 0x" +
+                             b[i + 3].ToString("X2") + b[i + 2].ToString("X2") +
+                             b[i + 0].ToString("X2") + b[i + 1].ToString("X2");
+                i += 4;
+                OutputHandler.LogMessage(eax + " " + ebx + " " + ecx + " " + edx);
+                OutputHandler.LogMessage(edi + " " + esi);
+                OutputHandler.LogMessage(ebp+ " " + esp+ " " + eip);
+                OutputHandler.LogMessage("");
+
+                while (i < b.Length)
+                {
+                    string xAddress = "0x" +
+                                      b[i + 3].ToString("X2") + b[i + 2].ToString("X2") +
+                                      b[i + 0].ToString("X2") + b[i + 1].ToString("X2");
+                    xCallStack += xAddress + " ";
+                    if ((i != 0) &&(i%12 == 0))
+                    {
+                        OutputHandler.LogMessage(xCallStack.Trim());
+                        xCallStack = "";
+                    }
+                    i += 4;
+                }
+                if (xCallStack != "")
+                {
+                    OutputHandler.LogMessage(xCallStack.Trim());
+                    xCallStack = "";
+                }
+            };
+
+            if (RunWithGDB)
+            {
+                debugConnector.CmdInterruptOccurred = a =>
+                                                      {
+                                                          OutputHandler.LogMessage($"Interrupt {a} occurred");
+                                                      };
+            }
         }
 
-        private void HandleRunning(DebugConnector debugConnector, Base host)
+        private void HandleRunning(DebugConnector debugConnector, Host host)
         {
             if (debugConnector == null)
             {
@@ -85,11 +175,12 @@ namespace Cosmos.TestRunner.Core
                         break;
                     }
                 }
+
                 if (!mKernelResultSet)
                 {
                     OutputHandler.SetKernelTestResult(true, null);
+                    OutputHandler.SetKernelSucceededAssertionsCount(mSucceededAssertions);
                 }
-                OutputHandler.SetKernelSucceededAssertionsCount(mSucceededAssertions);
             }
             finally
             {
@@ -101,6 +192,7 @@ namespace Cosmos.TestRunner.Core
         }
 
         private volatile bool mKernelResultSet;
+        private volatile bool mKernelResult;
         private int mSucceededAssertions;
 
         private void ChannelPacketReceived(byte arg1, byte arg2, byte[] arg3)
@@ -140,14 +232,16 @@ namespace Cosmos.TestRunner.Core
         {
             OutputHandler.SetKernelTestResult(false, "Test failed");
             mKernelResultSet = true;
+            mKernelResult = false;
             mKernelRunning = false;
         }
 
         private void KernelTestCompleted()
         {
-            Thread.Sleep(50);
+            OutputHandler.SetKernelTestResult(true, "Test completed");
+            mKernelResultSet = true;
+            mKernelResult = true;
             mKernelRunning = false;
-            Console.WriteLine("Test completed");
         }
     }
 }

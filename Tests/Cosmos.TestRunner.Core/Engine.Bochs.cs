@@ -1,10 +1,11 @@
 ﻿using System;
-using System.Collections.Specialized;
+using System.Collections.Generic;
 using System.IO;
 using System.Threading;
+
 using Cosmos.Build.Common;
-using Cosmos.Debug.Common;
-using Cosmos.Debug.VSDebugEngine.Host;
+using Cosmos.Debug.DebugConnectors;
+using Cosmos.Debug.Hosts;
 
 namespace Cosmos.TestRunner.Core
 {
@@ -18,7 +19,7 @@ namespace Cosmos.TestRunner.Core
             }
 
             var xBochsConfig = Path.Combine(mBaseWorkingDirectory, "Kernel.bochsrc");
-            var xParams = new NameValueCollection();
+            var xParams = new Dictionary<string, string>();
 
             xParams.Add("ISOFile", iso);
             xParams.Add(BuildPropertyNames.VisualStudioDebugPortString, "Pipe: Cosmos\\Serial");
@@ -30,8 +31,9 @@ namespace Cosmos.TestRunner.Core
             var xBochs = new Bochs(xParams, RunWithGDB, new FileInfo(xBochsConfig), harddisk);
 
             xBochs.OnShutDown = (a, b) =>
-                                {
-                                };
+            {
+                mKernelRunning = false;
+            };
 
             xBochs.RedirectOutput = false;
             xBochs.LogError = s => OutputHandler.LogDebugMessage(s);
